@@ -135,6 +135,6 @@ Bullwler — это открытый исходный код, но с огран
 
 ---
 \
-© 2025 [advanceddev](https://github.com/advanceddev)
+© 2025 Автор проекта [advanceddev](https://github.com/advanceddev)
 
 Для коммерческих запросов свяжитесь по email: **criticalbang@yandex.ru** или Telegram: **https://t.me/frntbck**
