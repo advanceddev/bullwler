@@ -25,9 +25,12 @@ jobs:
 
       - name: Check formatting (gofmt)
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
+          # Найти все .go файлы, кроме vendor/
+          unformatted=$(find . -name "*.go" -not -path "./vendor/*" -exec gofmt -l {} +)
+          if [ -n "$unformatted" ]; then
             echo "❌ Код не отформатирован. Запустите: go fmt ./..."
-            gofmt -d .
+            echo "Файлы с проблемами:"
+            echo "$unformatted"
             exit 1
           fi
 
