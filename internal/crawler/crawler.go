@@ -3,13 +3,10 @@ package crawler
 import (
 	"fmt"
 	"net/url"
-	"sync"
 	"time"
 
 	"bullwler/internal/analyzer"
 	"bullwler/internal/report"
-
-	"github.com/cheggaaa/pb/v3"
 )
 
 // Crawler - структура краулера
@@ -48,7 +45,7 @@ func WithMaxPages(n int) Option { return func(c *Crawler) { c.maxPages = n } }
 // WithConcurrency - задает максимальное колисество горутин
 func WithConcurrency(n int) Option { return func(c *Crawler) { c.concurrency = n } }
 
-// Crawl - рекурсивно сканирует ресурс
+// Crawl - рекурсивно сканирует ресурс (итеративная реализация)
 func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	base, err := url.Parse(startURL)
 	if err != nil {
@@ -56,72 +53,48 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	}
 	allowedHost := base.Hostname()
 
-	bar := pb.Simple.Start64(int64(c.maxPages))
-	bar.Start()
-
-	var mu sync.Mutex
 	seen := make(map[string]bool)
 	results := make([]report.CrawlResult, 0, c.maxPages)
-	queue := make(chan crawlTask, c.maxPages*2)
-	var wg sync.WaitGroup
 
-	for i := 0; i < c.concurrency; i++ {
-		wg.Add(1)   // ← ДОБАВЛЕНО
-		go func() { // ← ИСПРАВЛЕНО: go func(), а не wg.Go()
-			defer wg.Done() // ← ДОБАВЛЕНО
-			for task := range queue {
-				if task.Depth > c.maxDepth {
-					continue
+	queue := []crawlTask{{URL: startURL, Depth: 0}}
+
+	for len(queue) > 0 && len(seen) < c.maxPages {
+
+		task := queue[0]
+		queue = queue[1:]
+
+		if task.Depth > c.maxDepth {
+			continue
+		}
+
+		if seen[task.URL] {
+			continue
+		}
+		seen[task.URL] = true
+
+		if !c.robots.Allowed(c.userAgent, task.URL) {
+			results = append(results, report.CrawlResult{
+				URL:   task.URL,
+				Error: fmt.Errorf("запрещено robots.txt"),
+			})
+			continue
+		}
+
+		rep := analyzer.AnalyzeURL(task.URL)
+		results = append(results, report.CrawlResult{URL: task.URL, Report: rep})
+
+		if task.Depth < c.maxDepth && rep.StatusCode == 200 {
+			newURLs := c.extractInternalLinks(rep, allowedHost)
+			for _, nextURL := range newURLs {
+				if !seen[nextURL] && len(seen) < c.maxPages {
+					queue = append(queue, crawlTask{URL: nextURL, Depth: task.Depth + 1})
 				}
-
-				mu.Lock()
-				if seen[task.URL] || len(seen) >= c.maxPages {
-					mu.Unlock()
-					continue
-				}
-				seen[task.URL] = true
-				mu.Unlock()
-
-				if !c.robots.Allowed(c.userAgent, task.URL) {
-					mu.Lock()
-					results = append(results, report.CrawlResult{
-						URL:   task.URL,
-						Error: fmt.Errorf("запрещено robots.txt"),
-					})
-					mu.Unlock()
-					bar.Increment()
-					continue
-				}
-
-				rep := analyzer.AnalyzeURL(task.URL)
-
-				mu.Lock()
-				results = append(results, report.CrawlResult{URL: task.URL, Report: rep})
-				if task.Depth < c.maxDepth && rep.StatusCode == 200 {
-					newURLs := c.extractInternalLinks(rep, allowedHost)
-					for _, nextURL := range newURLs {
-						if !seen[nextURL] {
-							queue <- crawlTask{URL: nextURL, Depth: task.Depth + 1}
-						}
-					}
-				}
-				mu.Unlock()
-
-				bar.Increment()
-				time.Sleep(500 * time.Millisecond)
 			}
-		}()
+		}
+
+		time.Sleep(300 * time.Millisecond)
 	}
 
-	queue <- crawlTask{URL: startURL, Depth: 0}
-
-	go func() {
-		time.Sleep(15 * time.Second)
-		close(queue)
-	}()
-
-	wg.Wait()
-	bar.Finish()
 	return results, nil
 }
 
