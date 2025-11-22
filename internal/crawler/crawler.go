@@ -57,7 +57,7 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	allowedHost := base.Hostname()
 
 	bar := pb.Simple.Start64(int64(c.maxPages))
-	bar.SetRefreshRate(500 * time.Millisecond)
+	bar.Start()
 
 	var mu sync.Mutex
 	seen := make(map[string]bool)
@@ -66,7 +66,9 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < c.concurrency; i++ {
-		wg.Go(func() {
+		wg.Add(1)   // ← ДОБАВЛЕНО
+		go func() { // ← ИСПРАВЛЕНО: go func(), а не wg.Go()
+			defer wg.Done() // ← ДОБАВЛЕНО
 			for task := range queue {
 				if task.Depth > c.maxDepth {
 					continue
@@ -108,7 +110,7 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 				bar.Increment()
 				time.Sleep(500 * time.Millisecond)
 			}
-		})
+		}()
 	}
 
 	queue <- crawlTask{URL: startURL, Depth: 0}

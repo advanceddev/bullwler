@@ -1,4 +1,4 @@
-package utils
+package helpers
 
 import (
 	"golang.org/x/net/html"

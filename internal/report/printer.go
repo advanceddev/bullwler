@@ -322,11 +322,11 @@ func grayf(format string, args ...interface{}) string {
 	return color.New(color.FgHiBlack).Sprintf(format, args...)
 }
 
-func strconvEllipsis(s string, max int) string {
-	if len(s) <= max {
+func strconvEllipsis(s string, maximum int) string {
+	if len(s) <= maximum {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maximum-3] + "..."
 }
 
 func extractTypes(v any) []string {

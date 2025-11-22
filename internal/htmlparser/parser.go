@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
+	"bullwler/internal/helpers"
 	"bullwler/internal/report"
-	"bullwler/internal/utils"
 
 	"golang.org/x/net/html"
 )
@@ -30,11 +30,11 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	case "meta":
 		handleMeta(n, r)
 	case "title":
-		if text := utils.GetText(n); text != "" {
+		if text := helpers.GetText(n); text != "" {
 			r.Title = strings.TrimSpace(text)
 		}
 	case "link":
-		if rel := utils.GetAttr(n, "rel"); rel == "canonical" {
+		if rel := helpers.GetAttr(n, "rel"); rel == "canonical" {
 			r.HasCanonical = true
 		}
 	case "script":
@@ -54,12 +54,12 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	case "img":
 		handleImage(n, r)
 	case "button":
-		if utils.GetAttr(n, "type") == "" {
+		if helpers.GetAttr(n, "type") == "" {
 			r.InvalidButtons++
 		}
 	case "a":
 		handleLink(n, r)
-		if href := utils.GetAttr(n, "href"); href != "" {
+		if href := helpers.GetAttr(n, "href"); href != "" {
 			if absURL := resolveURL(r.URL, href); absURL != "" {
 				r.AllLinks = append(r.AllLinks, absURL)
 			}
@@ -69,7 +69,7 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	case "input", "textarea", "select":
 		handleInput(n, r, labelForMap)
 	case "label":
-		if forAttr := utils.GetAttr(n, "for"); forAttr == "" {
+		if forAttr := helpers.GetAttr(n, "for"); forAttr == "" {
 			r.LabelsWithoutFor++
 		}
 	}
@@ -89,7 +89,7 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	// Headings
 	if len(tag) == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6' {
 		r.HeadingCounts[tag]++
-		if text := utils.GetText(n); text != "" {
+		if text := helpers.GetText(n); text != "" {
 			cleanText := strings.TrimSpace(text)
 			if cleanText != "" {
 				r.HeadingTexts[tag] = append(r.HeadingTexts[tag], cleanText)
@@ -99,24 +99,22 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	}
 
 	// Microdata / RDFa
-	if _, exists := utils.GetAttrExists(n, "itemscope"); exists {
+	if _, exists := helpers.GetAttrExists(n, "itemscope"); exists {
 		r.HasMicrodata = true
-		if itemType, exists := utils.GetAttrExists(n, "itemtype"); exists && itemType != "" {
+		if itemType, exists := helpers.GetAttrExists(n, "itemtype"); exists && itemType != "" {
 			r.MicrodataTypes = append(r.MicrodataTypes, extractSchemaTypes(itemType)...)
 		}
 	}
-	if vocab, exists := utils.GetAttrExists(n, "vocab"); exists && vocab != "" {
+	if vocab, exists := helpers.GetAttrExists(n, "vocab"); exists && vocab != "" {
 		r.HasRDFa = true
 		r.RDFaVocabularies = append(r.RDFaVocabularies, vocab)
-	} else if _, exists := utils.GetAttrExists(n, "typeof"); exists {
+	} else if _, exists := helpers.GetAttrExists(n, "typeof"); exists {
 		r.HasRDFa = true
 	}
 }
 
-// --- Handlers ---
-
 func handleMeta(n *html.Node, r *report.SEOReport) {
-	name, prop, content := utils.GetMetaAttrsFull(n)
+	name, prop, content := helpers.GetMetaAttrsFull(n)
 	if strings.HasPrefix(prop, "og:") {
 		r.OG[strings.TrimPrefix(prop, "og:")] = content
 	}
@@ -132,9 +130,9 @@ func handleMeta(n *html.Node, r *report.SEOReport) {
 }
 
 func handleScript(n *html.Node, r *report.SEOReport) {
-	if typ := utils.GetAttr(n, "type"); typ == "application/ld+json" {
+	if typ := helpers.GetAttr(n, "type"); typ == "application/ld+json" {
 		r.HasJSONLD = true
-		content := strings.Join(utils.CollectText(n), "")
+		content := strings.Join(helpers.CollectText(n), "")
 		trimmed := strings.TrimSpace(content)
 		if trimmed == "" {
 			r.SchemaOrgErrors = append(r.SchemaOrgErrors, "Пустой JSON-LD блок")
@@ -147,52 +145,44 @@ func handleScript(n *html.Node, r *report.SEOReport) {
 			return
 		}
 
-		if !validateJSONLDContext(data) {
-			r.SchemaOrgErrors = append(r.SchemaOrgErrors, "@context должен быть 'https://schema.org'")
+		context, hasContext := data["@context"]
+		if !hasContext {
+			r.SchemaOrgErrors = append(r.SchemaOrgErrors, "Отсутствует @context")
+		} else {
+			ctxStr := ""
+			switch v := context.(type) {
+			case string:
+				ctxStr = v
+			case []interface{}:
+				if len(v) > 0 {
+					if s, ok := v[0].(string); ok {
+						ctxStr = s
+					}
+				}
+			}
+			if ctxStr != "https://schema.org" && ctxStr != "http://schema.org" {
+				r.SchemaOrgErrors = append(r.SchemaOrgErrors, "@context должен быть 'https://schema.org'")
+			}
 		}
-		if !validateJSONLDType(data, r.SchemaTypes) {
-			// Ошибки типов уже добавлены внутри
+
+		if typeVal, hasType := data["@type"]; hasType {
+			types := helpers.ExtractTypes(typeVal)
+			for _, t := range types {
+				if !r.SchemaTypes[t] {
+					r.SchemaOrgErrors = append(r.SchemaOrgErrors, fmt.Sprintf("Неизвестный тип Schema.org: %s", t))
+				}
+			}
+		} else {
+			r.SchemaOrgErrors = append(r.SchemaOrgErrors, "Отсутствует @type")
 		}
+
 		r.JSONLD = append(r.JSONLD, data)
 	}
 }
 
-func validateJSONLDContext(data map[string]interface{}) bool {
-	context, has := data["@context"]
-	if !has {
-		return false
-	}
-	ctxStr := ""
-	switch v := context.(type) {
-	case string:
-		ctxStr = v
-	case []interface{}:
-		if len(v) > 0 {
-			if s, ok := v[0].(string); ok {
-				ctxStr = s
-			}
-		}
-	}
-	return ctxStr == "https://schema.org" || ctxStr == "http://schema.org"
-}
-
-func validateJSONLDType(data map[string]interface{}, knownTypes map[string]bool) bool {
-	typeVal, has := data["@type"]
-	if !has {
-		return false
-	}
-	types := utils.ExtractTypes(typeVal)
-	for _, t := range types {
-		if !knownTypes[t] {
-			return false
-		}
-	}
-	return true
-}
-
 func handleImage(n *html.Node, r *report.SEOReport) {
 	r.ImageCount++
-	if alt, ok := utils.GetAttrExists(n, "alt"); !ok {
+	if alt, ok := helpers.GetAttrExists(n, "alt"); !ok {
 		r.ImageWithoutAlt++
 	} else if alt == "" {
 		r.ImageWithEmptyAlt++
@@ -200,9 +190,9 @@ func handleImage(n *html.Node, r *report.SEOReport) {
 }
 
 func handleLink(n *html.Node, r *report.SEOReport) {
-	href := utils.GetAttr(n, "href")
-	target := utils.GetAttr(n, "target")
-	rel := utils.GetAttr(n, "rel")
+	href := helpers.GetAttr(n, "href")
+	target := helpers.GetAttr(n, "target")
+	rel := helpers.GetAttr(n, "rel")
 
 	if target == "_blank" {
 		parts := strings.Fields(strings.ToLower(rel))
@@ -228,8 +218,8 @@ func handleLink(n *html.Node, r *report.SEOReport) {
 
 func handleForm(n *html.Node, r *report.SEOReport) {
 	r.FormCount++
-	action := utils.GetAttr(n, "action")
-	method := strings.ToLower(utils.GetAttr(n, "method"))
+	action := helpers.GetAttr(n, "action")
+	method := strings.ToLower(helpers.GetAttr(n, "method"))
 	if r.IsHTTPS && strings.HasPrefix(action, "http://") {
 		r.InsecureFormActions++
 	}
@@ -239,9 +229,9 @@ func handleForm(n *html.Node, r *report.SEOReport) {
 }
 
 func handleInput(n *html.Node, r *report.SEOReport, labelForMap map[string]bool) {
-	id, _ := utils.GetAttrExists(n, "id")
-	name, nameExists := utils.GetAttrExists(n, "name")
-	required, _ := utils.GetAttrExists(n, "required")
+	id, _ := helpers.GetAttrExists(n, "id")
+	name, nameExists := helpers.GetAttrExists(n, "name")
+	required, _ := helpers.GetAttrExists(n, "required")
 
 	if !nameExists || name == "" {
 		r.InputWithoutName++

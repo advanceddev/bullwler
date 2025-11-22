@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"bullwler/internal/helpers"
 	"bullwler/internal/htmlparser"
 	"bullwler/internal/report"
-	"bullwler/internal/utils"
 
 	"golang.org/x/net/html"
 )
@@ -38,12 +38,12 @@ func AnalyzeURL(rawURL string) *report.SEOReport {
 		return rep
 	}
 
-	rep.HasRobotsTxt = utils.CheckResourceExists(base.Scheme + "://" + base.Host + "/robots.txt")
-	rep.HasSitemap = utils.CheckResourceExists(base.Scheme + "://" + base.Host + "/sitemap.xml")
+	rep.HasRobotsTxt = helpers.CheckResourceExists(base.Scheme + "://" + base.Host + "/robots.txt")
+	rep.HasSitemap = helpers.CheckResourceExists(base.Scheme + "://" + base.Host + "/sitemap.xml")
 
 	client := &http.Client{
 		Timeout: 15 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 			rep.Redirects = append(rep.Redirects, req.URL.String())
 			return nil
 		},
@@ -87,13 +87,13 @@ func AnalyzeURL(rawURL string) *report.SEOReport {
 	}
 
 	rep.HTMLBytes = len(htmlStr)
-	rep.TextBytes = len(utils.GetText(doc))
+	rep.TextBytes = len(helpers.GetText(doc))
 	if rep.HTMLBytes > 0 {
 		rep.TextToHTMLRatio = float64(rep.TextBytes) / float64(rep.HTMLBytes)
 	}
 
 	labelForMap := make(map[string]bool)
-	utils.CollectLabelFor(doc, labelForMap)
+	helpers.CollectLabelFor(doc, labelForMap)
 	htmlparser.AnalyzeNode(doc, rep, labelForMap)
 
 	rep.TitleLength = len(rep.Title)
