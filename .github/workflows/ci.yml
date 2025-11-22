@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    name: Lint, Vet & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+          cache-dependency-path: go.sum
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Check formatting (gofmt)
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "❌ Код не отформатирован. Запустите: go fmt ./..."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Vet code
+        run: go vet ./...
+
+      - name: Static analysis (staticcheck)
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+      - name: Lint (revive)
+        run: |
+          go install github.com/mgechev/revive@latest
+          revive -config revive.toml ./... || echo "⚠️ Найдены стилистические замечания"
+
+      - name: Run tests (if any)
+        run: go test -v -race ./...
+
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+
+      - name: Build binary
+        run: go build -v -o bullwler ./cmd
+
+      - name: Verify binary exists (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: test -f bullwler
+
+      - name: Verify binary exists (Windows)
+        if: matrix.os == 'windows-latest'
+        run: if not exist bullwler.exe exit 1
