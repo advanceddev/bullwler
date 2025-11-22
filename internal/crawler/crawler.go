@@ -8,6 +8,8 @@ import (
 
 	"bullwler/internal/analyzer"
 	"bullwler/internal/report"
+
+	"github.com/cheggaaa/pb/v3"
 )
 
 // Crawler - структура краулера
@@ -54,6 +56,9 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	}
 	allowedHost := base.Hostname()
 
+	bar := pb.Simple.Start64(int64(c.maxPages))
+	bar.SetRefreshRate(500 * time.Millisecond)
+
 	var mu sync.Mutex
 	seen := make(map[string]bool)
 	results := make([]report.CrawlResult, 0, c.maxPages)
@@ -61,9 +66,7 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < c.concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for task := range queue {
 				if task.Depth > c.maxDepth {
 					continue
@@ -84,6 +87,7 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 						Error: fmt.Errorf("запрещено robots.txt"),
 					})
 					mu.Unlock()
+					bar.Increment()
 					continue
 				}
 
@@ -91,7 +95,6 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 
 				mu.Lock()
 				results = append(results, report.CrawlResult{URL: task.URL, Report: rep})
-
 				if task.Depth < c.maxDepth && rep.StatusCode == 200 {
 					newURLs := c.extractInternalLinks(rep, allowedHost)
 					for _, nextURL := range newURLs {
@@ -102,19 +105,21 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 				}
 				mu.Unlock()
 
-				time.Sleep(100 * time.Millisecond)
+				bar.Increment()
+				time.Sleep(500 * time.Millisecond)
 			}
-		}()
+		})
 	}
 
 	queue <- crawlTask{URL: startURL, Depth: 0}
 
 	go func() {
-		time.Sleep(10 * time.Second)
+		time.Sleep(15 * time.Second)
 		close(queue)
 	}()
 
 	wg.Wait()
+	bar.Finish()
 	return results, nil
 }
 

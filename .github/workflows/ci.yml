@@ -32,20 +32,20 @@ jobs:
           fi
 
       - name: Vet code
-        run: go vet ./...
+        run: go vet $(go list ./... | grep -v /vendor/)
 
       - name: Static analysis (staticcheck)
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
+          staticcheck $(go list ./... | grep -v /vendor/)
 
       - name: Lint (revive)
         run: |
           go install github.com/mgechev/revive@latest
-          revive -config revive.toml ./... || echo "⚠️ Найдены стилистические замечания"
+          revive -config revive.toml $(go list ./... | grep -v /vendor/) || echo "⚠️ Найдены стилистические замечания"
 
       - name: Run tests (if any)
-        run: go test -v -race ./...
+        run: go test -v -race $(go list ./... | grep -v /vendor/)
 
   build:
     name: Build on Ubuntu
