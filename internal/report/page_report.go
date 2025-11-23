@@ -83,6 +83,14 @@ type SEOReport struct {
 	ParagraphCount     int
 	AvgParagraphLength int
 	AIScore            int
+	HasDateModified    bool
+	HasAuthor          bool
+	HasAuthorWithName  bool
+	ListCount          int
+	TableCount         int
+	HTMLLang           string
+	CanonicalHost      string
+	Host               string
 
 	// Для краулера
 	AllLinks []string

@@ -108,6 +108,7 @@ func AnalyzeURL(rawURL string) *report.SEOReport {
 
 func checkSecurityHeaders(headers http.Header, isHTTPS bool) []string {
 	var missing []string
+
 	if headers.Get("Content-Security-Policy") == "" {
 		missing = append(missing, "Content-Security-Policy")
 	}
@@ -120,5 +121,31 @@ func checkSecurityHeaders(headers http.Header, isHTTPS bool) []string {
 	if isHTTPS && headers.Get("Strict-Transport-Security") == "" {
 		missing = append(missing, "Strict-Transport-Security")
 	}
+
+	if headers.Get("Referrer-Policy") == "" {
+		missing = append(missing, "Referrer-Policy")
+	}
+	if headers.Get("Permissions-Policy") == "" {
+		missing = append(missing, "Permissions-Policy")
+	}
+
+	if headers.Get("Cross-Origin-Opener-Policy") == "" {
+		missing = append(missing, "Cross-Origin-Opener-Policy")
+	}
+	if headers.Get("Cross-Origin-Embedder-Policy") == "" {
+		missing = append(missing, "Cross-Origin-Embedder-Policy")
+	}
+
+	if headers.Get("Server") != "" {
+		missing = append(missing, "Server (рекомендуется убрать)")
+	}
+	if headers.Get("X-Powered-By") != "" {
+		missing = append(missing, "X-Powered-By (рекомендуется убрать)")
+	}
+
+	if val := headers.Get("X-XSS-Protection"); val != "" && val != "0" {
+		missing = append(missing, "X-XSS-Protection (рекомендуется: 0 или отсутствие)")
+	}
+
 	return missing
 }

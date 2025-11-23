@@ -27,6 +27,15 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	tag := n.Data
 
 	switch tag {
+	case "html":
+		r.HTMLLang = helpers.GetAttr(n, "lang")
+		if u, err := url.Parse(r.URL); err == nil {
+			r.Host = u.Host
+		}
+	case "ol", "ul":
+		r.ListCount++
+	case "table":
+		r.TableCount++
 	case "meta":
 		handleMeta(n, r)
 	case "title":
@@ -36,6 +45,9 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 	case "link":
 		if rel := helpers.GetAttr(n, "rel"); rel == "canonical" {
 			r.HasCanonical = true
+			if u, err := url.Parse(helpers.GetAttr(n, "href")); err == nil {
+				r.CanonicalHost = u.Host
+			}
 		}
 	case "script":
 		handleScript(n, r)
@@ -314,31 +326,65 @@ func ValidateHeadings(r *report.SEOReport) bool {
 	return true
 }
 
-// CheckAIFeatures - функция для анализа на ИИ-дружелюбность
+// CheckAIFeatures - расширенный анализ на ИИ-дружелюбность
 func CheckAIFeatures(r *report.SEOReport) {
 	for _, ld := range r.JSONLD {
 		if _, has := ld["datePublished"]; has {
 			r.HasDatePublished = true
-			break
+		}
+		if _, has := ld["dateModified"]; has {
+			r.HasDateModified = true
+		}
+		if author, has := ld["author"]; has {
+			r.HasAuthor = true
+			if authorMap, ok := author.(map[string]interface{}); ok {
+				if _, hasName := authorMap["name"]; hasName {
+					r.HasAuthorWithName = true
+				}
+			}
 		}
 	}
 
 	score := 0
+
 	if r.HasMain {
 		score++
 	}
 	if r.HasJSONLD && len(r.SchemaOrgErrors) == 0 {
 		score++
 	}
-	if r.TextToHTMLRatio > 0.1 {
-		score++
-	}
-	if r.HasDatePublished {
-		score++
-	}
 	if r.Description != "" || len(r.HeadingTexts["h1"]) > 0 {
 		score++
 	}
+	if r.HasCanonical {
+		score++
+	}
+
+	if r.HasDatePublished || r.HasDateModified {
+		score++
+	}
+	if r.HasAuthorWithName {
+		score++
+	}
+
+	if r.TextBytes > 500 {
+		score++
+	}
+	if r.TextToHTMLRatio > 0.1 {
+		score++
+	}
+	if r.TextToHTMLRatio > 0.2 {
+		score++
+	}
+
+	if r.ListCount > 0 || r.TableCount > 0 {
+		score++
+	}
+
+	if r.HTMLLang != "" {
+		score++
+	}
+
 	r.AIScore = score
 }
 

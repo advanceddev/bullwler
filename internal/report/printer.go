@@ -17,7 +17,7 @@ func (r *SEOReport) Print() {
 	cyan := color.New(color.FgCyan).SprintFunc()
 	white := color.New(color.FgWhite).SprintFunc()
 
-	fmt.Println(cyan("🔍 РЕЗУЛЬТАТ АУДИТА"), r.URL)
+	fmt.Println(cyan("\n🔍 РЕЗУЛЬТАТ АУДИТА"), r.URL)
 	fmt.Println(strings.Repeat("─", 65))
 
 	fmt.Printf("🌐 URL: %s\n", white(r.URL))
