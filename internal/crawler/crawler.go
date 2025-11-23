@@ -1,15 +1,21 @@
 package crawler
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"bullwler/internal/analyzer"
 	"bullwler/internal/report"
 )
 
-// Crawler - структура краулера
+// Crawler — структура краулера
 type Crawler struct {
 	robots      *RobotsClient
 	maxDepth    int
@@ -18,12 +24,12 @@ type Crawler struct {
 	userAgent   string
 }
 
-// NewCrawler - создает новый инстанс краулера
+// NewCrawler — создаёт новый инстанс краулера
 func NewCrawler(opts ...Option) *Crawler {
 	c := &Crawler{
 		robots:      NewRobotsClient(),
 		maxDepth:    2,
-		maxPages:    50,
+		maxPages:    30,
 		concurrency: 5,
 		userAgent:   "BullwlerBot/1.0",
 	}
@@ -33,19 +39,24 @@ func NewCrawler(opts ...Option) *Crawler {
 	return c
 }
 
-// Option - структура опции краулера
+// Option — функциональная опция
 type Option func(*Crawler)
 
-// WithMaxDepth - задает максимальную глубину сканирования
+// WithMaxDepth — задаёт максимальную глубину сканирования
 func WithMaxDepth(d int) Option { return func(c *Crawler) { c.maxDepth = d } }
 
-// WithMaxPages - задает максимальное количество страниц для сканирования
+// WithMaxPages — задаёт максимальное количество страниц
 func WithMaxPages(n int) Option { return func(c *Crawler) { c.maxPages = n } }
 
-// WithConcurrency - задает максимальное колисество горутин
+// WithConcurrency — задаёт количество параллельных горутин
 func WithConcurrency(n int) Option { return func(c *Crawler) { c.concurrency = n } }
 
-// Crawl - рекурсивно сканирует ресурс (итеративная реализация)
+type crawlTask struct {
+	URL   string
+	Depth int
+}
+
+// Crawl — рекурсивно сканирует сайт
 func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	base, err := url.Parse(startURL)
 	if err != nil {
@@ -53,52 +64,99 @@ func (c *Crawler) Crawl(startURL string) ([]report.CrawlResult, error) {
 	}
 	allowedHost := base.Hostname()
 
+	var mu sync.Mutex
 	seen := make(map[string]bool)
-	results := make([]report.CrawlResult, 0, c.maxPages)
+	var results []report.CrawlResult
 
-	queue := []crawlTask{{URL: startURL, Depth: 0}}
+	taskQueue := make(chan crawlTask, c.maxPages)
 
-	for len(queue) > 0 && len(seen) < c.maxPages {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-		task := queue[0]
-		queue = queue[1:]
+	g, gCtx := errgroup.WithContext(ctx)
 
-		if task.Depth > c.maxDepth {
-			continue
-		}
+	for i := 0; i < c.concurrency; i++ {
+		g.Go(func() error {
+			for {
+				select {
+				case <-gCtx.Done():
+					return nil
+				case task, ok := <-taskQueue:
+					if !ok {
+						return nil
+					}
 
-		if seen[task.URL] {
-			continue
-		}
-		seen[task.URL] = true
+					if task.Depth > c.maxDepth {
+						continue
+					}
 
-		if !c.robots.Allowed(c.userAgent, task.URL) {
-			results = append(results, report.CrawlResult{
-				URL:   task.URL,
-				Error: fmt.Errorf("запрещено robots.txt"),
-			})
-			continue
-		}
+					normalizedURL := normalizeURL(task.URL)
 
-		rep := analyzer.AnalyzeURL(task.URL)
-		results = append(results, report.CrawlResult{URL: task.URL, Report: rep})
+					mu.Lock()
+					if seen[normalizedURL] || len(seen) >= c.maxPages {
+						mu.Unlock()
+						continue
+					}
+					seen[normalizedURL] = true
+					currentCount := len(seen)
+					mu.Unlock()
 
-		if task.Depth < c.maxDepth && rep.StatusCode == 200 {
-			newURLs := c.extractInternalLinks(rep, allowedHost)
-			for _, nextURL := range newURLs {
-				if !seen[nextURL] && len(seen) < c.maxPages {
-					queue = append(queue, crawlTask{URL: nextURL, Depth: task.Depth + 1})
+					log.Printf("➤ Анализ %s (%d/%d)", task.URL, currentCount, c.maxPages)
+
+					var res report.CrawlResult
+					if !c.robots.Allowed(c.userAgent, task.URL) {
+						res = report.CrawlResult{
+							URL:   task.URL,
+							Error: fmt.Errorf("запрещено robots.txt"),
+						}
+					} else {
+						rep := analyzer.AnalyzeURL(task.URL)
+						res = report.CrawlResult{URL: task.URL, Report: rep}
+					}
+
+					mu.Lock()
+					results = append(results, res)
+					mu.Unlock()
+
+					if task.Depth < c.maxDepth && res.Report != nil && res.Report.StatusCode == 200 {
+						newURLs := c.extractInternalLinks(res.Report, allowedHost)
+						mu.Lock()
+						for _, nextURL := range newURLs {
+							normalizedNext := normalizeURL(nextURL)
+							if !seen[normalizedNext] && len(seen) < c.maxPages {
+								select {
+								case taskQueue <- crawlTask{URL: nextURL, Depth: task.Depth + 1}:
+								case <-gCtx.Done():
+									mu.Unlock()
+									return nil
+								default:
+								}
+							}
+						}
+						mu.Unlock()
+					}
+
+					time.Sleep(200 * time.Millisecond)
 				}
 			}
-		}
-
-		time.Sleep(300 * time.Millisecond)
+		})
 	}
 
+	select {
+	case taskQueue <- crawlTask{URL: startURL, Depth: 0}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	_ = g.Wait()
+
+	close(taskQueue)
+
+	log.Printf("Сканирование завершено. Обработано %d страниц", len(results))
 	return results, nil
 }
 
-// CrawlSite - формирует отчет о просканированном ресурсе
+// CrawlSite — формирует сводный отчёт
 func (c *Crawler) CrawlSite(startURL string) (*report.SiteReport, error) {
 	results, err := c.Crawl(startURL)
 	if err != nil {
@@ -124,17 +182,34 @@ func (c *Crawler) CrawlSite(startURL string) (*report.SiteReport, error) {
 	}, nil
 }
 
-type crawlTask struct {
-	URL   string
-	Depth int
+func normalizeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.Fragment = ""
+	u.RawQuery = ""
+	if u.Path == "/" {
+		u.Path = ""
+	}
+
+	return strings.TrimRight(u.String(), "/")
 }
 
 func (c *Crawler) extractInternalLinks(rep *report.SEOReport, host string) []string {
 	var internal []string
+	seen := make(map[string]bool)
+
 	for _, link := range rep.AllLinks {
 		u, err := url.Parse(link)
-		if err == nil && u.Hostname() == host {
-			internal = append(internal, link)
+		if err != nil || u.Hostname() != host {
+			continue
+		}
+		normalized := normalizeURL(u.String())
+
+		if !seen[normalized] {
+			seen[normalized] = true
+			internal = append(internal, normalized)
 		}
 	}
 	return internal
