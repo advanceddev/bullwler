@@ -95,6 +95,7 @@ func AnalyzeURL(rawURL string) *report.SEOReport {
 	labelForMap := make(map[string]bool)
 	helpers.CollectLabelFor(doc, labelForMap)
 	htmlparser.AnalyzeNode(doc, rep, labelForMap)
+	htmlparser.CheckAIDeepFeatures(rep)
 
 	rep.TitleLength = len(rep.Title)
 	rep.DescriptionLength = len(rep.Description)

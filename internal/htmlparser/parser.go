@@ -76,6 +76,13 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 				r.AllLinks = append(r.AllLinks, absURL)
 			}
 		}
+	case "p":
+		if text := helpers.GetText(n); text != "" {
+			cleanText := strings.TrimSpace(text)
+			if cleanText != "" {
+				r.Paragraphs = append(r.Paragraphs, cleanText)
+			}
+		}
 	case "form":
 		handleForm(n, r)
 	case "input", "textarea", "select":
@@ -86,6 +93,14 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 		}
 	}
 
+	if helpers.HasAttr(n, "onclick") && !helpers.HasAttr(n, "tabindex") {
+		r.A11yWarnings = append(r.A11yWarnings, "<div> с onclick должен иметь tabindex=\"0\" для клавиатурной навигации")
+	}
+
+	if idVal, hasID := helpers.GetAttrExists(n, "id"); hasID && idVal != "" {
+		r.AllIDs = append(r.AllIDs, idVal)
+	}
+
 	// ARIA
 	for _, attr := range n.Attr {
 		switch attr.Key {
@@ -93,8 +108,24 @@ func processElement(n *html.Node, r *report.SEOReport, labelForMap map[string]bo
 			r.AriaLabels++
 		case "aria-labelledby":
 			r.AriaLabelledBy++
+
+			targets := strings.Fields(attr.Val)
+			for _, targetID := range targets {
+				if !idExists(r.AllIDs, targetID) {
+					r.A11yErrors = append(r.A11yErrors, fmt.Sprintf("aria-labelledby='%s' ссылается на несуществующий id", targetID))
+				}
+			}
 		case "role":
 			r.Roles++
+			if !isValidRoleForElement(tag, attr.Val) {
+				r.A11yWarnings = append(r.A11yWarnings, fmt.Sprintf("Недопустимая роль '%s' для <%s>", attr.Val, tag))
+			}
+			required := requiredAriaAttrs(attr.Val)
+			for _, reqAttr := range required {
+				if !helpers.HasAttr(n, reqAttr) {
+					r.A11yErrors = append(r.A11yErrors, fmt.Sprintf("Роль '%s' требует атрибут %s", attr.Val, reqAttr))
+				}
+			}
 		}
 	}
 
@@ -194,10 +225,18 @@ func handleScript(n *html.Node, r *report.SEOReport) {
 
 func handleImage(n *html.Node, r *report.SEOReport) {
 	r.ImageCount++
-	if alt, ok := helpers.GetAttrExists(n, "alt"); !ok {
+	alt, hasAlt := helpers.GetAttrExists(n, "alt")
+
+	if !hasAlt {
 		r.ImageWithoutAlt++
+		r.A11yErrors = append(r.A11yErrors, "Изображение без alt-атрибута")
 	} else if alt == "" {
 		r.ImageWithEmptyAlt++
+	} else {
+		lower := strings.ToLower(alt)
+		if strings.Contains(lower, "изображение") || strings.Contains(lower, "image") || strings.Contains(lower, "img") {
+			r.A11yWarnings = append(r.A11yWarnings, fmt.Sprintf("Бесполезный alt: '%s'", alt))
+		}
 	}
 }
 
@@ -269,6 +308,9 @@ func handleInput(n *html.Node, r *report.SEOReport, labelForMap map[string]bool)
 		if required != "" {
 			r.RequiredWithoutLabel++
 		}
+		if !helpers.HasAttr(n, "aria-label") && !helpers.HasAttr(n, "aria-labelledby") {
+			r.A11yErrors = append(r.A11yErrors, "Поле ввода не имеет доступной метки (ни <label>, ни aria-label)")
+		}
 	}
 }
 
@@ -297,6 +339,129 @@ func resolveURL(baseURL, href string) string {
 		return ""
 	}
 	return abs.String()
+}
+
+func hasDirectAnswer(r *report.SEOReport) bool {
+	if len(r.Paragraphs) == 0 || r.Title == "" {
+		return false
+	}
+
+	title := strings.ToLower(r.Title)
+	firstParagraphs := ""
+	for i := 0; i < 2 && i < len(r.Paragraphs); i++ {
+		firstParagraphs += " " + strings.ToLower(r.Paragraphs[i])
+	}
+
+	if strings.HasSuffix(strings.TrimSpace(title), "?") {
+		answerWords := []string{"это", "означает", "является", "можно", "следует", "важно", "необходимо"}
+		for _, word := range answerWords {
+			if strings.Contains(firstParagraphs, word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func calculateTextDensity(r *report.SEOReport) float64 {
+	if len(r.Paragraphs) == 0 {
+		return 0
+	}
+
+	totalWords := 0
+	uniqueWords := make(map[string]bool)
+
+	for _, p := range r.Paragraphs {
+		words := strings.Fields(strings.ToLower(p))
+		totalWords += len(words)
+		for _, w := range words {
+			clean := strings.Trim(w, ".,!?;:")
+			if len(clean) > 2 {
+				uniqueWords[clean] = true
+			}
+		}
+	}
+
+	if totalWords == 0 {
+		return 0
+	}
+
+	return float64(len(uniqueWords)) / float64(totalWords)
+}
+
+func idExists(ids []string, target string) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidRoleForElement(tag, role string) bool {
+
+	if role == "presentation" || role == "none" {
+		return true
+	}
+
+	switch role {
+	case "heading":
+		return tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6"
+	case "button":
+		return tag == "button" || tag == "summary" || tag == "a" || tag == "input"
+	case "checkbox", "radio":
+		return tag == "input"
+	case "textbox", "searchbox", "combobox":
+		return tag == "input" || tag == "textarea"
+	case "list":
+		return tag == "ul" || tag == "ol"
+	case "listitem":
+		return tag == "li"
+	case "img":
+		return tag == "img"
+	case "link":
+		return tag == "a"
+	case "navigation", "banner", "main", "complementary", "contentinfo", "region", "form", "search",
+		"article", "section", "aside", "figure", "application", "document", "feed", "log", "marquee", "status", "timer":
+		return true
+	}
+
+	return true
+}
+
+func requiredAriaAttrs(role string) []string {
+	switch role {
+	case "checkbox":
+		return []string{"aria-checked"}
+	case "radio":
+		return []string{"aria-checked"}
+	case "slider":
+		return []string{"aria-valuenow", "aria-valuemin", "aria-valuemax"}
+	case "spinbutton":
+		return []string{"aria-valuenow"}
+	case "progressbar":
+		return []string{"aria-valuenow"}
+	default:
+		return nil
+	}
+}
+
+// CheckAIDeepFeatures — расширенный анализ для ИИ-индексации
+func CheckAIDeepFeatures(r *report.SEOReport) {
+	for _, ld := range r.JSONLD {
+		if t, ok := ld["@type"].(string); ok {
+			switch t {
+			case "FAQPage":
+				r.HasFAQStructured = true
+			case "HowTo":
+				r.HasHowToStructured = true
+			}
+		}
+	}
+
+	r.HasDirectAnswer = hasDirectAnswer(r)
+
+	r.TextDensityScore = calculateTextDensity(r)
 }
 
 // ValidateHeadings - функция проверки заголовков их структуры на странице
@@ -382,6 +547,15 @@ func CheckAIFeatures(r *report.SEOReport) {
 	}
 
 	if r.HTMLLang != "" {
+		score++
+	}
+	if r.HasDirectAnswer {
+		score++
+	}
+	if r.TextDensityScore > 0.6 {
+		score++
+	}
+	if r.HasFAQStructured || r.HasHowToStructured {
 		score++
 	}
 
@@ -489,5 +663,11 @@ func AddWarnings(r *report.SEOReport) {
 	}
 	if !r.HasDatePublished {
 		r.Info = append(r.Info, "Отсутствует datePublished — ИИ не сможет определить актуальность")
+	}
+	if !r.HasDirectAnswer && strings.HasSuffix(strings.TrimSpace(r.Title), "?") {
+		r.Info = append(r.Info, "Заголовок-вопрос не содержит прямого ответа в тексте")
+	}
+	if r.TextDensityScore < 0.4 {
+		r.Warnings = append(r.Warnings, "Высокая доля 'воды' в тексте — ИИ может проигнорировать")
 	}
 }

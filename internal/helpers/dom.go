@@ -50,12 +50,22 @@ func GetAttrExists(n *html.Node, key string) (string, bool) {
 	return "", false
 }
 
-// GetAttr - функция получения атрибута DOM-элемента
+// GetAttr - функция получения атрибута и его значения у DOM-элемента
 func GetAttr(n *html.Node, key string) string {
 	if val, exists := GetAttrExists(n, key); exists {
 		return val
 	}
 	return ""
+}
+
+// HasAttr - проверяет наличие атрибуда у DOM элемента
+func HasAttr(n *html.Node, key string) bool {
+	for _, attr := range n.Attr {
+		if attr.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // GetMetaAttrsFull - функция получения meta-элементов документа

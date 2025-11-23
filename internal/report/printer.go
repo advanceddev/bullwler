@@ -37,7 +37,8 @@ func (r *SEOReport) Print() {
 	fmt.Printf("  Основной контент в <main>: %s\n", boolIcon(r.HasMain))
 	fmt.Printf("  Дата публикации: %s\n", boolIcon(r.HasDatePublished))
 	fmt.Printf("  Структурированные данные: %s\n", boolIcon(r.SchemaOrgValidationOK))
-	fmt.Printf("  AI Readiness Score: %s/5\n", white(strconv.Itoa(r.AIScore)))
+
+	fmt.Printf("  AI Readiness Score: %s/%d\n", white(strconv.Itoa(r.AIScore)), MaxAIScore)
 
 	fmt.Println("\n" + cyan("📄 SEO"))
 	fmt.Printf("  Title: %s %s\n", white(strconvEllipsis(r.Title, 50)), grayf("(%d)", r.TitleLength))
@@ -142,6 +143,18 @@ func (r *SEOReport) Print() {
 	fmt.Printf("  Кнопок без type: %s | Ссылок без href: %s\n",
 		warnCount(r.InvalidButtons), warnCount(r.InvalidLinks))
 
+	if len(r.A11yErrors) > 0 {
+		fmt.Printf("  ❌ Критические a11y-ошибки:\n")
+		for _, e := range r.A11yErrors {
+			fmt.Printf("    • %s\n", e)
+		}
+	}
+	if len(r.A11yWarnings) > 0 {
+		fmt.Printf("  ⚠️  a11y-предупреждения:\n")
+		for _, w := range r.A11yWarnings {
+			fmt.Printf("    • %s\n", w)
+		}
+	}
 	if r.FormCount > 0 {
 		fmt.Println("\n" + cyan("📋 ФОРМЫ"))
 		fmt.Printf("  Форм: %s\n", white(strconv.Itoa(r.FormCount)))

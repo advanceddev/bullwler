@@ -2,6 +2,9 @@ package report
 
 import "strings"
 
+// MaxAIScore - максимальное значение AI Score
+const MaxAIScore = 14
+
 // SEOReport - структура отчета по странице
 type SEOReport struct {
 	URL string
@@ -44,6 +47,8 @@ type SEOReport struct {
 	HasArticle bool
 	HasSection bool
 	HasFooter  bool
+	Paragraphs []string
+	AllIDs     []string
 
 	// Заголовки
 	HeadingCounts    map[string]int
@@ -60,6 +65,8 @@ type SEOReport struct {
 	Roles             int
 	InvalidButtons    int
 	InvalidLinks      int
+	A11yErrors        []string
+	A11yWarnings      []string
 
 	// Формы
 	FormCount            int
@@ -91,6 +98,10 @@ type SEOReport struct {
 	HTMLLang           string
 	CanonicalHost      string
 	Host               string
+	HasDirectAnswer    bool
+	TextDensityScore   float64
+	HasFAQStructured   bool
+	HasHowToStructured bool
 
 	// Для краулера
 	AllLinks []string
